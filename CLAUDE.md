@@ -26,18 +26,15 @@ npm run start            # node dist/index.cjs
 
 # Database
 npm run db:push          # Push Drizzle schema to PostgreSQL
-
-# File server (run separately from repo root)
-cd file-server && npm install && node server.js
 ```
 
 There are no test commands configured.
 
 ## Architecture
 
-### Two-server design
+### Single-server design
 
-The main Express server (`server/`) serves the React SPA and provides backend API routes. A **separate** file server (`file-server/`) handles uploads and Google Drive sync — it runs independently on its own port (default 3000) and is not imported by the main server.
+The Express server (`server/`) serves the React SPA, provides backend API routes, and handles file uploads and Google Drive sync.
 
 ### Frontend state and data flow
 
@@ -48,9 +45,14 @@ The main Express server (`server/`) serves the React SPA and provides backend AP
   - Both paths stream via SSE (`ReadableStream`). The `onChunk` callback surfaces tokens incrementally.
 - **React Query** is configured but inference calls are not React Query queries — they're imperative calls triggered by form submit.
 
-### Backend (currently thin)
+### Backend
 
-`server/routes.ts` registers routes but is currently empty. `server/storage.ts` defines an `IStorage` interface (user CRUD) with a `MemStorage` in-memory implementation. The Drizzle + PostgreSQL schema in `shared/schema.ts` is defined and ready but the backend doesn't yet use it — `DATABASE_URL` must be set for `db:push` to work.
+`server/routes.ts` mounts the file routes (`server/files/routes.ts`) under `/api` and serves uploaded files as static assets from `/uploads`. `server/storage.ts` defines an `IStorage` interface (user CRUD) with a `MemStorage` in-memory implementation. The Drizzle + PostgreSQL schema in `shared/schema.ts` is defined and ready but the backend doesn't yet use it — `DATABASE_URL` must be set for `db:push` to work.
+
+**File & Drive module** (`server/files/`):
+- `routes.ts` — Express `Router` handling `GET /api/files`, `POST /api/upload`, `GET /api/drive/files`, `POST /api/drive/download/:fileId`, `DELETE /api/files/:filename`
+- `drive.ts` — Google Drive OAuth2 client; reads `credentials.json` and `token.json` from the project root; Drive features are silently disabled when `credentials.json` is absent
+- Uploaded files land in `uploads/` at the project root and are served at `/uploads/<filename>`
 
 ### Path aliases
 
@@ -74,8 +76,4 @@ shadcn/ui components live in `client/src/components/ui/`. Add new shadcn compone
 
 The HF API key is stored client-side in `localStorage` (set via the Settings dialog, never sent to the backend).
 
-Google Drive integration in the file server requires `file-server/credentials.json` (OAuth2 credentials). If absent, Drive features are silently disabled.
-
-## File Server
-
-`file-server/server.js` is a standalone Express app (plain JS, not TypeScript). It uses `multer` for uploads (stored under `file-server/public/uploads/`) and `googleapis` for Drive sync. Run it independently; it does not share config or code with the main server.
+Google Drive integration requires `credentials.json` and (after first auth) `token.json` at the project root. If `credentials.json` is absent, Drive features are silently disabled.
