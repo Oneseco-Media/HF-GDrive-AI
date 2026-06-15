@@ -4,6 +4,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const drive = require('./drive');
+const { uploadFileToR2, ENABLE_R2 } = require('./r2');
+const { sendNotification, ENABLE_PUSHCUT } = require('./pushcut');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -35,7 +37,13 @@ const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), driveEnabled: ENABLE_DRIVE });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    driveEnabled: ENABLE_DRIVE,
+    r2Enabled: ENABLE_R2,
+    pushcutEnabled: ENABLE_PUSHCUT
+  });
 });
 
 // List files in directory
@@ -77,7 +85,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     originalName: req.file.originalname,
     size: req.file.size,
     url: `/uploads/${req.file.filename}`,
-    driveId: null
+    driveId: null,
+    r2Url: null
   };
 
   // Sync to Google Drive if enabled
@@ -89,6 +98,32 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     } catch (error) {
       console.error('Drive sync failed:', error);
       response.driveSyncError = error.message;
+    }
+  }
+
+  // Sync to Cloudflare R2 if enabled
+  if (ENABLE_R2 && req.body.syncToR2 === 'true') {
+    try {
+      const r2File = await uploadFileToR2(req.file.path, req.file.originalname);
+      response.r2Url = r2File.url;
+      response.r2Key = r2File.key;
+    } catch (error) {
+      console.error('R2 sync failed:', error);
+      response.r2SyncError = error.message;
+    }
+  }
+
+  // Send Pushcut notification if enabled
+  if (ENABLE_PUSHCUT && req.body.notifyPushcut === 'true') {
+    try {
+      await sendNotification(
+        'New File Uploaded',
+        `File: ${req.file.originalname}\nSize: ${(req.file.size / 1024 / 1024).toFixed(2)} MB`
+      );
+      response.pushcutNotified = true;
+    } catch (error) {
+      console.error('Pushcut notification failed:', error);
+      response.pushcutError = error.message;
     }
   }
 
@@ -156,5 +191,11 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📁 File server running at http://0.0.0.0:${PORT}`);
   if (ENABLE_DRIVE) {
     console.log('☁️  Google Drive sync enabled');
+  }
+  if (ENABLE_R2) {
+    console.log('☁️  Cloudflare R2 sync enabled');
+  }
+  if (ENABLE_PUSHCUT) {
+    console.log('🔔 Pushcut notifications enabled');
   }
 });
